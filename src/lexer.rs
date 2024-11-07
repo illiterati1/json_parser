@@ -1,3 +1,5 @@
+use core::fmt;
+
 use anyhow::{bail, Result};
 
 #[derive(Debug, PartialEq)]
@@ -13,6 +15,25 @@ pub enum Token<'a> {
     True,
     False,
     Null,
+}
+
+impl fmt::Display for Token<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::LeftBrace => write!(f, "{{"),
+            Self::RightBrace => write!(f, "}}"),
+            Self::LeftBracket => write!(f, "["),
+            Self::RightBracket => write!(f, "]"),
+            Self::Colon => write!(f, ":"),
+            Self::Comma => write!(f, ","),
+            Self::Str(s) => write!(f, "\"{s}\""),
+            Self::Number(Numeric::Integer(n)) => write!(f, "{n}"),
+            Self::Number(Numeric::Float(n)) => write!(f, "{n}"),
+            Self::True => write!(f, "true"),
+            Self::False => write!(f, "false"),
+            Self::Null => write!(f, "null"),
+        }
+    }
 }
 
 #[derive(Debug, PartialEq, Copy, Clone)]

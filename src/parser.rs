@@ -222,10 +222,17 @@ mod tests {
 
     #[test]
     fn test_parse_complex_object() {
-        let contents = r#"{"hello": 99, "bar": [1, 2, 3, 4]}"#;;
+        let contents = r#"{"hello": 99, "bar": [1, 2, 3, 4]}"#;
         let mut lexer = Lexer::new(contents);
         let tokens = lexer.lex().unwrap();
         let parser = Parser::new();
         let jsontree = parser.parse(&tokens).unwrap().unwrap();
+        match jsontree {
+            JsonTree::Object(map) => {
+                assert!(matches!(map.get("hello").unwrap(), JsonTree::Atom(Token::Number(Numeric::Integer(99)))));
+                assert!(matches!(map.get("bar").unwrap(), JsonTree::Array(_)));
+            }
+            _ => panic!(),
+        }
     }
 }

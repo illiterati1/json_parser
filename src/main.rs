@@ -17,7 +17,7 @@ fn main() -> Result<()> {
         Ok(f) => f,
         Err(e) => { 
             println!("Encountered error opening file {}: {e}", args.path.to_str().unwrap());
-            exit(10);
+            exit(-1);
         }
     };
     let mut contents = String::new();
@@ -25,7 +25,7 @@ fn main() -> Result<()> {
         Ok(_) => {}
         Err(e) => {
             println!("Encountered error reading file {}: {e}", args.path.to_str().unwrap());
-            exit(11);
+            exit(-1);
         }
     }
 
