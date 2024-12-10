@@ -2,7 +2,7 @@ use std::io::Read;
 use std::path::PathBuf;
 use std::process::exit;
 use std::fs::File;
-use anyhow::Result;
+use anyhow::{Context, Result};
 
 use clap::Parser;
 use lexer::Lexer;
@@ -13,32 +13,20 @@ mod parser;
 
 fn main() -> Result<()> {
     let args = Args::parse();
-    let mut file = match File::open(&args.path) {
-        Ok(f) => f,
-        Err(e) => { 
-            println!("Encountered error opening file {}: {e}", args.path.to_str().unwrap());
-            exit(-1);
-        }
-    };
+    let mut file = File::open(&args.path)
+        .with_context(|| format!("Failed to open '{}'", args.path.to_string_lossy()))?;
     let mut contents = String::new();
-    match file.read_to_string(&mut contents) {
-        Ok(_) => {}
-        Err(e) => {
-            println!("Encountered error reading file {}: {e}", args.path.to_str().unwrap());
-            exit(-1);
-        }
-    }
-
-    let mut lexer = Lexer::new(&contents);
-    let tokens = lexer.lex()?;
-    let parser = MyParser::new();
-    match parser.parse(&tokens) {
+    file.read_to_string(&mut contents)
+        .with_context(|| format!("Failed to read '{}'", args.path.to_string_lossy()))?;
+    let lexer = Lexer::new(&contents);
+    let mut parser = MyParser::new(lexer);
+    match parser.parse() {
         Ok(Some(tree)) => {
             println!("{tree:?}")
         }
         Ok(None) => {}
         Err(e) => {
-            println!("Error parsing {}: {e}", args.path.to_str().unwrap());
+            println!("Error parsing '{}': {e}", args.path.to_string_lossy());
             exit(1);
         }
     }

@@ -1,122 +1,131 @@
 use std::collections::HashMap;
 use std::iter::Peekable;
-use std::slice::Iter;
 use anyhow::{bail, Result};
-use crate::lexer::Token;
+use crate::lexer::{Lexer, Numeric, Token};
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum JsonTree<'a> {
     Object(HashMap<&'a str, JsonTree<'a>>),
     Array(Vec<JsonTree<'a>>),
-    Atom(Token<'a>),
+    Str(&'a str),
+    Num(Numeric),
+    True,
+    False,
+    Null,
 }
 
-pub struct Parser { }
+pub struct Parser<'a> {
+    lexer: Peekable<Lexer<'a>>,
+}
 
-impl<'a> Parser {
-    pub fn new() -> Self {
-        Self { }
+impl<'a> Parser<'a> {
+    pub fn new(lexer: Lexer<'a>) -> Self {
+        Self { 
+            lexer: lexer.peekable(),
+        }
     }
 
-    pub fn parse(&'a self, vec: &'a [Token]) -> Result<Option<JsonTree>> {
-        self.value(&mut vec.iter().peekable())
+    pub fn parse(&mut self) -> Result<Option<JsonTree<'a>>> {
+        self.value()
     }
 
-    fn value(&'a self, iter: &mut Peekable<Iter<Token<'a>>>) -> Result<Option<JsonTree>> {
-        match iter.peek() {
+    fn value(&mut self) -> Result<Option<JsonTree<'a>>> {
+        match self.lexer.peek() {
             Some(Token::LeftBrace) => {
-                match self.object(iter) {
+                match self.object() {
                     Ok(object) => Ok(Some(object)),
                     Err(e) => Err(e.context("In parsing of object")),
                 }
             }
             Some(Token::LeftBracket) => {
-                match self.array(iter) {
+                match self.array() {
                     Ok(array) => Ok(Some(array)),
                     Err(e) => Err(e.context("In parsing of array"))
                 }
             }
             Some(Token::Str(s)) => {
-                iter.next();
-                Ok(Some(JsonTree::Atom(Token::Str(s))))
+                let result = Ok(Some(JsonTree::Str(s)));
+                self.lexer.next();
+                result
             }
             Some(Token::Number(n)) => {
-                iter.next();
-                Ok(Some(JsonTree::Atom(Token::Number(*n))))
+                let result = Ok(Some(JsonTree::Num(*n)));
+                self.lexer.next();
+                result
             }
             Some(Token::True) => {
-                iter.next();
-                Ok(Some(JsonTree::Atom(Token::True)))
+                self.lexer.next();
+                Ok(Some(JsonTree::True))
             }
             Some(Token::False) => {
-                iter.next();
-                Ok(Some(JsonTree::Atom(Token::False)))
+                self.lexer.next();
+                Ok(Some(JsonTree::False))
             }
             Some(Token::Null) => {
-                iter.next();
-                Ok(Some(JsonTree::Atom(Token::Null)))
+                self.lexer.next();
+                Ok(Some(JsonTree::Null))
             }
             None => Ok(None),
             Some(t) => bail!("Unexpected token {t:?}"),
         }
     }
 
-    fn object(&'a self, iter: &mut Peekable<Iter<Token<'a>>>) -> Result<JsonTree> {
-        iter.next(); // consume left brace
+    fn object(&mut self) -> Result<JsonTree<'a>> {
+        self.lexer.next(); // consume left brace
         let mut elements: HashMap<&str, JsonTree> = HashMap::new();
-        if matches!(iter.peek(), Some(Token::RightBrace)) {
+        if self.lexer.peek() == Some(&Token::RightBrace) {
             return Ok(JsonTree::Object(elements));
         }
         loop {
-            let name = match iter.next() {
+            let name = match self.lexer.next() {
                 Some(Token::Str(s)) => s,
                 t => bail!("Invalid token {t:?}"),
             };
-            match iter.next() {
+            match self.lexer.next() {
                 Some(Token::Colon) => {}
                 Some(t) => bail!("Expected ':' but found {:?}", t),
                 None => bail!("Unexpected end of input"),
             }
-            let member = match self.value(iter) {
+            let member = match self.value() {
                 Ok(Some(value)) => value,
                 Ok(None) => bail!("Unexpected end of input"),
                 Err(e) => return Err(e.context("In object member definition")),
             };
             elements.insert(name, member);
-            if matches!(iter.peek(), Some(Token::Comma)) {
-                iter.next();
+            if self.lexer.peek() == Some(&Token::Comma) {
+                self.lexer.next();
             } else {
                 break;
             }
         }
-        let token = iter.next();
+        let token = self.lexer.next();
         if !matches!(token, Some(Token::RightBrace)) {
             bail!("Expected }}, got {token:?}");
         }
         Ok(JsonTree::Object(elements))
     }
 
-    fn array(&'a self, iter: &mut Peekable<Iter<Token<'a>>>) -> Result<JsonTree> {
-        iter.next();
+    fn array(&mut self) -> Result<JsonTree<'a>> {
+        self.lexer.next();
         let mut elements = Vec::new();
-        if matches!(iter.peek(), Some(Token::RightBracket)) {
-            iter.next();
+        if self.lexer.peek() == Some(&Token::RightBracket) {
+            self.lexer.next();
             return Ok(JsonTree::Array(elements));
         }
         loop {
-            let element = match self.value(iter) {
+            let element = match self.value() {
                 Ok(Some(value)) => value,
                 Ok(None) => bail!("Unexpected end of input"),
                 Err(e) => return Err(e.context("In array definition")),
             };
             elements.push(element);
-            if matches!(iter.peek(), Some(Token::Comma)) {
-                iter.next();
+            if self.lexer.peek() == Some(&Token::Comma) {
+                self.lexer.next();
             } else {
                 break;
             }
         }
-        let token = iter.next();
+        let token = self.lexer.next();
         if !matches!(token, Some(Token::RightBracket)) {
             bail!("Expected ] but got {token:?}");
         }
@@ -126,40 +135,35 @@ impl<'a> Parser {
 
 #[cfg(test)]
 mod tests {
-    use core::panic;
-
     use super::*;
     use crate::{lexer::Numeric, Lexer};
 
     #[test]
     fn test_parse_empty_object() {
         let contents = "{}";
-        let mut lexer = Lexer::new(contents);
-        let tokens = lexer.lex().unwrap();
-        let parser = Parser::new();
-        assert!(parser.parse(&tokens).is_ok());
+        let lexer = Lexer::new(contents);
+        let mut parser = Parser::new(lexer);
+        assert!(parser.parse().is_ok());
     }
 
     #[test]
     fn test_parse_invalid_object() {
         let contents = r#"{"foo": }"#;
-        let mut lexer = Lexer::new(contents);
-        let tokens = lexer.lex().unwrap();
-        let parser = Parser::new();
-        assert!(parser.parse(&tokens).is_err());
+        let lexer = Lexer::new(contents);
+        let mut parser = Parser::new(lexer);
+        assert!(parser.parse().is_err());
     }
 
     #[test]
     fn test_parse_basic_object1() {
         let contents = r#"{"hello": "world"}"#;
-        let mut lexer = Lexer::new(contents);
-        let tokens = lexer.lex().unwrap();
-        let parser = Parser::new();
-        let jsontree = parser.parse(&tokens).unwrap().unwrap();
+        let lexer = Lexer::new(contents);
+        let mut parser = Parser::new(lexer);
+        let jsontree = parser.parse().unwrap().unwrap();
         assert!(matches!(jsontree, JsonTree::Object(_)));
         match jsontree {
             JsonTree::Object(map) => 
-            assert!(matches!(map.get("hello").unwrap(), JsonTree::Atom(Token::Str("world")))),
+            assert_eq!(*map.get("hello").unwrap(), JsonTree::Str("world")),
             _ => panic!(),
         }
     }
@@ -167,15 +171,14 @@ mod tests {
     #[test]
     fn test_parse_basic_object2() {
         let contents = r#"{"hello": "world", "goodbye": true}"#;
-        let mut lexer = Lexer::new(contents);
-        let tokens = lexer.lex().unwrap();
-        let parser = Parser::new();
-        let jsontree = parser.parse(&tokens).unwrap().unwrap();
+        let lexer = Lexer::new(contents);
+        let mut parser = Parser::new(lexer);
+        let jsontree = parser.parse().unwrap().unwrap();
         assert!(matches!(jsontree, JsonTree::Object(_)));
         match jsontree {
             JsonTree::Object(map) => {
-                assert!(matches!(map.get("hello").unwrap(), JsonTree::Atom(Token::Str("world"))));
-                assert!(matches!(map.get("goodbye").unwrap(), JsonTree::Atom(Token::True)));
+                assert!(matches!(map.get("hello").unwrap(), JsonTree::Str("world")));
+                assert!(matches!(map.get("goodbye").unwrap(), JsonTree::True));
             }
             _ => panic!(),
         }
@@ -184,17 +187,16 @@ mod tests {
     #[test]
     fn test_parse_array() {
         let contents = r#"[1, 2.0, "foo", false, null]"#;
-        let mut lexer = Lexer::new(contents);
-        let tokens = lexer.lex().unwrap();
-        let parser = Parser::new();
-        let jsontree = parser.parse(&tokens).unwrap().unwrap();
+        let lexer = Lexer::new(contents);
+        let mut parser = Parser::new(lexer);
+        let jsontree = parser.parse().unwrap().unwrap();
         match jsontree {
             JsonTree::Array(vec) => {
-                assert!(matches!(vec[0], JsonTree::Atom(Token::Number(Numeric::Integer(1)))));
-                assert!(matches!(vec[1], JsonTree::Atom(Token::Number(Numeric::Float(2.0)))));
-                assert!(matches!(vec[2], JsonTree::Atom(Token::Str("foo"))));
-                assert!(matches!(vec[3], JsonTree::Atom(Token::False)));
-                assert!(matches!(vec[4], JsonTree::Atom(Token::Null)));
+                assert!(matches!(vec[0], JsonTree::Num(Numeric::Integer(1))));
+                assert!(matches!(vec[1], JsonTree::Num(Numeric::Float(2.0))));
+                assert!(matches!(vec[2], JsonTree::Str("foo")));
+                assert!(matches!(vec[3], JsonTree::False));
+                assert!(matches!(vec[4], JsonTree::Null));
             }
             _ => panic!(),
         }
@@ -203,10 +205,9 @@ mod tests {
     #[test]
     fn test_parse_nested_array() {
         let contents = r#"[[[]]]"#;
-        let mut lexer = Lexer::new(contents);
-        let tokens = lexer.lex().unwrap();
-        let parser = Parser::new();
-        let jsontree = parser.parse(&tokens).unwrap().unwrap();
+        let lexer = Lexer::new(contents);
+        let mut parser = Parser::new(lexer);
+        let jsontree = parser.parse().unwrap().unwrap();
         match jsontree {
             JsonTree::Array(level2) => {
                 match &level2[0] {
@@ -223,13 +224,12 @@ mod tests {
     #[test]
     fn test_parse_complex_object() {
         let contents = r#"{"hello": 99, "bar": [1, 2, 3, 4]}"#;
-        let mut lexer = Lexer::new(contents);
-        let tokens = lexer.lex().unwrap();
-        let parser = Parser::new();
-        let jsontree = parser.parse(&tokens).unwrap().unwrap();
+        let lexer = Lexer::new(contents);
+        let mut parser = Parser::new(lexer);
+        let jsontree = parser.parse().unwrap().unwrap();
         match jsontree {
             JsonTree::Object(map) => {
-                assert!(matches!(map.get("hello").unwrap(), JsonTree::Atom(Token::Number(Numeric::Integer(99)))));
+                assert!(matches!(map.get("hello").unwrap(), JsonTree::Num(Numeric::Integer(99))));
                 assert!(matches!(map.get("bar").unwrap(), JsonTree::Array(_)));
             }
             _ => panic!(),
